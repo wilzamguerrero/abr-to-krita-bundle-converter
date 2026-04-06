@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=Krita/PythonPlugin
+X-KDE-Library=procreate_to_kpp_converter
+X-Python-2-Compatible=false
+X-Krita-Manual=Manual.html
+Name=ABR to Krita Bundle Converter
+Comment=Convert Photoshop ABR brushes to Krita bundles
