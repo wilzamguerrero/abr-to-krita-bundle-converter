@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Service
 ServiceTypes=Krita/PythonPlugin
-X-KDE-Library=procreate_to_kpp_converter
+X-KDE-Library=abr_to_krita_bundle_converter
 X-Python-2-Compatible=false
 X-Krita-Manual=Manual.html
 Name=ABR to Krita Bundle Converter
