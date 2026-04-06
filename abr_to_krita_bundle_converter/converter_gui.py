@@ -8,47 +8,49 @@ from kpp.krita_resource_bundle_creator import KritaResourceBundleCreator
 from abr_to_kpp import ABRBrushConverter
 
 try:
-    from PyQt6.QtWidgets import QWidget, QFileDialog, QMessageBox, QApplication
+    from PyQt6.QtWidgets import QFileDialog, QMessageBox, QApplication
     from PyQt6.QtCore import qDebug, QSettings, Qt
 except:
-    from PyQt5.QtWidgets import QWidget, QFileDialog, QMessageBox, QApplication
+    from PyQt5.QtWidgets import QFileDialog, QMessageBox, QApplication
     from PyQt5.QtCore import qDebug, QSettings, Qt
 
 import os.path
 import traceback
 
-class ConverterGUI(QWidget):
+class ConverterGUI:
 
     def __init__(self):
-        super().__init__()
         self.settings = QSettings(os.path.join(os.path.dirname(__file__), "settings.ini"), QSettings.Format.IniFormat)
 
     def showDialog(self):
-        lastDir = os.path.dirname(self.settings.value("abrPath", ""))
-        path, _ = QFileDialog.getOpenFileName(None, "Select ABR brush file",
-                                              directory=lastDir,
-                                              filter="Photoshop brush files (*.abr)")
-        if not path:
-            return
-
-        self.settings.setValue("abrPath", path)
-
-        bundlePath = os.path.splitext(path)[0] + ".bundle"
-
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        parent = QApplication.activeWindow()
         try:
-            warnings = self.doConversion(path, bundlePath)
-            QApplication.restoreOverrideCursor()
+            lastDir = os.path.dirname(self.settings.value("abrPath", ""))
+            path, _ = QFileDialog.getOpenFileName(parent, "Select ABR brush file",
+                                                  directory=lastDir,
+                                                  filter="Photoshop brush files (*.abr)")
+            if not path:
+                return
+
+            self.settings.setValue("abrPath", path)
+
+            bundlePath = os.path.splitext(path)[0] + ".bundle"
+
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                warnings = self.doConversion(path, bundlePath)
+            finally:
+                QApplication.restoreOverrideCursor()
+
             if warnings:
                 msg = f"Finished with warnings:\n\nBundle saved to:\n{bundlePath}\n\n" + "\n".join(warnings)
-                QMessageBox.warning(None, "Conversion Complete", msg)
+                QMessageBox.warning(parent, "Conversion Complete", msg)
             else:
-                QMessageBox.information(None, "Conversion Complete",
+                QMessageBox.information(parent, "Conversion Complete",
                                         f"Finished successfully!\n\nBundle saved to:\n{bundlePath}")
         except Exception as e:
-            QApplication.restoreOverrideCursor()
             qDebug(traceback.format_exc())
-            QMessageBox.critical(None, "Conversion Error",
+            QMessageBox.critical(parent, "Conversion Error",
                                  f"An error occurred during conversion:\n\n{e}")
 
     def doConversion(self, path, bundlePath):
