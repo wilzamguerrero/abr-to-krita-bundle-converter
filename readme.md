@@ -6,7 +6,9 @@ Convert Photoshop `.abr` brush files into Krita resource bundles (`.bundle`).
 
 1. Copy the `abr_to_krita_bundle_converter/` folder and `abr_to_krita_bundle_converter.desktop` to your Krita Python plugins folder:
    - **Linux:** `~/.local/share/krita/pykrita/`
-   - **Flatpak:** `~/.var/app/org.kde.krita/data/krita/pykrita/`
+   - **Linux (Flatpak):** `~/.var/app/org.kde.krita/data/krita/pykrita/`
+   - **macOS:** `~/Library/Application Support/krita/pykrita/`
+   - **Windows:** `%APPDATA%\krita\pykrita\`
 2. Restart Krita
 3. Enable it in **Settings → Configure Krita → Python Plugin Manager → ABR to Krita Bundle Converter**
 
