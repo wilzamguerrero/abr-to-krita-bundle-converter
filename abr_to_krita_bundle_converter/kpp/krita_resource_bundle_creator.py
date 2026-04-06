@@ -11,6 +11,7 @@ import os.path
 from datetime import date
 import hashlib
 import platform
+from xml.sax.saxutils import escape as xml_escape
 
 def main():
     parser = argparse.ArgumentParser()
@@ -93,15 +94,17 @@ class KritaResourceBundleCreator:
             for resType, fileName, md5sum in self.resourceEntries:
                 key = (resType, fileName)
                 tags = self.resourceTags.get(key, [])
+                safeName = xml_escape(fileName, {'"': '&quot;'})
+                safePath = xml_escape(f"{resType}/{fileName}", {'"': '&quot;'})
                 if tags:
-                    manifestXML += f'\n <manifest:file-entry manifest:media-type="{resType}" manifest:full-path="{resType}/{fileName}" manifest:md5sum="{md5sum}">'
+                    manifestXML += f'\n <manifest:file-entry manifest:media-type="{resType}" manifest:full-path="{safePath}" manifest:md5sum="{md5sum}">'
                     manifestXML += '\n  <manifest:tags>'
                     for t in tags:
-                        manifestXML += f'\n   <manifest:tag>{t}</manifest:tag>'
+                        manifestXML += f'\n   <manifest:tag>{xml_escape(t)}</manifest:tag>'
                     manifestXML += '\n  </manifest:tags>'
                     manifestXML += '\n </manifest:file-entry>'
                 else:
-                    manifestXML += f'\n <manifest:file-entry manifest:media-type="{resType}" manifest:full-path="{resType}/{fileName}" manifest:md5sum="{md5sum}"/>'
+                    manifestXML += f'\n <manifest:file-entry manifest:media-type="{resType}" manifest:full-path="{safePath}" manifest:md5sum="{md5sum}"/>'
             manifestXML += "\n</manifest:manifest>\n"
             bundleZip.writestr("META-INF/manifest.xml", manifestXML)
 

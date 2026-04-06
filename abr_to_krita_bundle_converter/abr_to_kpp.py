@@ -7,6 +7,7 @@
 
 import argparse
 import os.path
+import sys
 
 from abr.abr_parser import ABRBrushParser
 from kpp.kpp_brush_parser import KPP_Brush_Parser
@@ -16,6 +17,12 @@ from kpp.paintop_preset import TextureBlendingModePixelEngine, BrushTipType, Ble
 from math import radians
 
 def main():
+    # Ensure print() doesn't crash on non-ASCII brush names
+    try:
+        sys.stdout.reconfigure(errors='replace')
+    except (AttributeError, Exception):
+        pass
+
     parser = argparse.ArgumentParser()
     parser.add_argument("file_path", help=".abr file path",
                         type=str)
@@ -83,17 +90,20 @@ def main():
 
     parser.closeFile()
 
-    names = []
+    nameCounts = {}
     for i in range(len(parser.desc['Brsh'])):
         name = parser.desc['Brsh'][i]['Objc']['brushPreset'][0]['Nm  ']['TEXT']
         print(f"### Brush number {i}: {name}")
         name = name.replace("/", "_")
-        if name in names:
-            name = f"{name} Duplicate" # ...
-        names.append(name)
+        if name in nameCounts:
+            nameCounts[name] += 1
+            name = f"{name} ({nameCounts[name]})"
+        else:
+            nameCounts[name] = 1
         output = os.path.join(outputPath,f"{name}.kpp") if outputPath else ""
         converter = ABRBrushConverter(parser, inputPath, output, name=name, bundleCreator=bundleCreator, sampUuidMd5=sampUuidMd5, pattUuidMd5=pattUuidMd5)
         converter.convertSettings(i)
+        converter.writer.setName(name)
         converter.saveKPP()
 
     if bundlePath:

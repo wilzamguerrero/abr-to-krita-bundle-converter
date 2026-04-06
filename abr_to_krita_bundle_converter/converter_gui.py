@@ -19,7 +19,28 @@ except:
     from PyQt5.QtCore import QSettings, Qt
 
 import os.path
+import sys
 import traceback
+
+
+class _SafeStdout:
+    """Wrapper for sys.stdout that handles UnicodeEncodeError gracefully.
+    Krita Flatpak may set stdout to ASCII encoding, which crashes print()
+    on non-ASCII brush names (Korean, special symbols, etc.)."""
+    def __init__(self, stream):
+        self._stream = stream
+    def write(self, text):
+        try:
+            return self._stream.write(text)
+        except UnicodeEncodeError:
+            return self._stream.write(
+                text.encode('ascii', errors='replace').decode('ascii'))
+    def flush(self):
+        if hasattr(self._stream, 'flush'):
+            self._stream.flush()
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
 
 class ConverterGUI(QWidget):
 
@@ -103,6 +124,15 @@ class ConverterGUI(QWidget):
             self.progressBar.setVisible(False)
 
     def doConversionImpl(self, path, bundlePath):
+        # Wrap stdout to prevent UnicodeEncodeError in ASCII-only environments
+        old_stdout = sys.stdout
+        sys.stdout = _SafeStdout(sys.stdout)
+        try:
+            return self._doConversionWork(path, bundlePath)
+        finally:
+            sys.stdout = old_stdout
+
+    def _doConversionWork(self, path, bundlePath):
         warnings = []
 
         bundleCreator = KritaResourceBundleCreator(bundlePath)
@@ -147,8 +177,9 @@ class ConverterGUI(QWidget):
                     QApplication.processEvents()
                 parser.verifyBytesRead(parser.fileHandle, sampEnd, 'samp')
             except Exception as e:
-                qDebug(f"Warning: Error reading brush tips: {e}")
-                warnings.append(f"Some brush tips could not be read: {e}")
+                safeErr = str(e).encode('ascii', errors='replace').decode('ascii')
+                qDebug(f"Warning: Error reading brush tips: {safeErr}")
+                warnings.append(f"Some brush tips could not be read: {safeErr}")
 
         self.progressBar.setFormat("Reading patterns...")
         self.progressBar.setValue(1)
@@ -156,9 +187,9 @@ class ConverterGUI(QWidget):
 
         pattEnd = parser.gotoBlock("patt")
         if pattEnd > 0:
-            try:
-                pattNames = []
-                while parser.fileHandle.seek(0, 1) < pattEnd:
+            pattNames = []
+            while parser.fileHandle.seek(0, 1) < pattEnd:
+                try:
                     images = parser.readPattern(parser.fileHandle, returnImage=True)
                     for (patternPNG, patternName, patternUuid) in images:
                         if patternName in pattNames:
@@ -167,33 +198,41 @@ class ConverterGUI(QWidget):
                         md5sum = bundleCreator.addResourceFromData(patternPNG, 'patterns', f"{patternName}.png")
                         pattUuidMd5[patternUuid] = md5sum
                     QApplication.processEvents()
-                parser.verifyBytesRead(parser.fileHandle, pattEnd, 'patt')
-            except Exception as e:
-                qDebug(f"Warning: Error reading patterns: {e}")
-                warnings.append(f"Some patterns could not be read: {e}")
+                except Exception as e:
+                    safeErr = str(e).encode('ascii', errors='replace').decode('ascii')
+                    qDebug(f"Warning: Error reading a pattern: {safeErr}")
+                    warnings.append(f"A pattern could not be read: {safeErr}")
+                    # Skip to end of patt block since we can't recover the position
+                    parser.fileHandle.seek(pattEnd)
+                    break
 
         parser.closeFile()
 
         tagName = os.path.splitext(os.path.basename(path))[0]
 
-        names = []
+        nameCounts = {}
         for i in range(numBrushes):
             try:
                 name = parser.desc['Brsh'][i]['Objc']['brushPreset'][0]['Nm  ']['TEXT']
-                qDebug(f"### Brush {i+1}/{numBrushes}: {name}")
+                safeName = name.encode('ascii', errors='replace').decode('ascii')
+                qDebug(f"### Brush {i+1}/{numBrushes}: {safeName}")
                 name = name.replace("/", "_")
-                if name in names:
-                    name = f"{name} Duplicate"
-                names.append(name)
+                if name in nameCounts:
+                    nameCounts[name] += 1
+                    name = f"{name} ({nameCounts[name]})"
+                else:
+                    nameCounts[name] = 1
                 converter = ABRBrushConverter(parser, '', '', name=name,
                                               bundleCreator=bundleCreator,
                                               sampUuidMd5=sampUuidMd5, pattUuidMd5=pattUuidMd5,
                                               sampUuidPNG=sampUuidPNG)
                 converter.convertSettings(i)
+                converter.writer.setName(name)
                 converter.saveKPP()
                 bundleCreator.addTag(tagName, "paintoppresets", f"{name}.kpp")
             except Exception as e:
-                qDebug(f"Warning: Failed to convert brush {i}: {e}")
+                safeErr = str(e).encode('ascii', errors='replace').decode('ascii')
+                qDebug(f"Warning: Failed to convert brush {i}: {safeErr}")
                 warnings.append(f"Brush {i} failed: {e}")
             self.progressBar.setValue(i + 2)
             self.progressBar.setFormat(f"Converting brushes... {i+1}/{numBrushes}")

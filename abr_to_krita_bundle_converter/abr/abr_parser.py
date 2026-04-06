@@ -318,7 +318,7 @@ class ABRBrushParser:
     def readTEXT(self, f):
         textCharLen = struct.unpack(">i", f.read(4))[0]
         textLen = textCharLen * 2
-        text = f.read(textLen).decode(encoding='utf_16_be').rstrip('\0')
+        text = f.read(textLen).decode(encoding='utf_16_be', errors='replace').rstrip('\0')
         return text
 
     def readTdta(self, f):
