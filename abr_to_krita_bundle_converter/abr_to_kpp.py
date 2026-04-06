@@ -64,16 +64,20 @@ def main():
         parser.verifyBytesRead(parser.fileHandle, sampEnd, 'samp')
 
         pattEnd = parser.gotoBlock("patt")
-        pattNames = []
-        while parser.fileHandle.seek(0, 1) < pattEnd:
-            images = parser.readPattern(parser.fileHandle, returnImage=True)
-            for (patternPNG, patternName, patternUuid) in images:
-                if patternName in pattNames:
-                    patternName = f"{patternName} {patternUuid[0:7]}"
-                pattNames.append(patternName)
-                md5sum = bundleCreator.addResourceFromData(patternPNG, 'patterns', f"{patternName}.png")
-                pattUuidMd5[patternUuid] = md5sum
-        parser.verifyBytesRead(parser.fileHandle, pattEnd, 'patt')
+        if pattEnd > 0:
+            try:
+                pattNames = []
+                while parser.fileHandle.seek(0, 1) < pattEnd:
+                    images = parser.readPattern(parser.fileHandle, returnImage=True)
+                    for (patternPNG, patternName, patternUuid) in images:
+                        if patternName in pattNames:
+                            patternName = f"{patternName} {patternUuid[0:7]}"
+                        pattNames.append(patternName)
+                        md5sum = bundleCreator.addResourceFromData(patternPNG, 'patterns', f"{patternName}.png")
+                        pattUuidMd5[patternUuid] = md5sum
+                parser.verifyBytesRead(parser.fileHandle, pattEnd, 'patt')
+            except Exception as e:
+                print(f"Warning: Error reading patterns: {e}")
 
     #parser.readDesc(parser.fileHandle, parser.gotoBlock("desc"))
 
@@ -145,13 +149,15 @@ class ABRBrushConverter:
     # these values are for the Pixel engine.
     blendModesTexture = {
         'Mltp': TextureBlendingModePixelEngine.Multiply,
-        #'': TextureBlendingModePixelEngine.Subtract,
+        'Sbtr': TextureBlendingModePixelEngine.Subtract,
         'Drkn': TextureBlendingModePixelEngine.Darken,
         'Ovrl': TextureBlendingModePixelEngine.Overlay,
         'CDdg': TextureBlendingModePixelEngine.ColorDodge,
         'CBrn': TextureBlendingModePixelEngine.ColorBurn,
         'Hght': TextureBlendingModePixelEngine.HeightPhotoshop,
         'hardMix': TextureBlendingModePixelEngine.HardMixPhotoshop,
+        'linearBurn': TextureBlendingModePixelEngine.LinearBurn,
+        'linearHeight': TextureBlendingModePixelEngine.LinearHeightPhotoshop,
     }
 
     # in no particular order
@@ -180,7 +186,10 @@ class ABRBrushConverter:
         2: SensorId.Pressure,
         3: SensorId.TiltDirection,
         4: SensorId.TangentialPressure, 
-        5: SensorId.Rotation
+        5: SensorId.Rotation,
+        6: SensorId.DrawingAngle,
+        7: SensorId.DrawingAngle,  # PS "Direction" (continuous)
+        8: SensorId.Speed           # PS "Noise"/velocity
     }
 
     def convertSensor(self, value):
@@ -198,7 +207,47 @@ class ABRBrushConverter:
         #print(f"Unsupported key: {key} : {self.loadSetting(key)}")
     def unsupportedSubKey(self, key):
         pass
-        #print(f"Unsupported sub key: {key} : {self.loadSetting(key)}")
+
+    def parseDynamicsBlock(self, value):
+        """Parse a dynamics block (brVr) and return (sensorType, fadeSteps, jitter, minimum)."""
+        sensorType = 0
+        fadeSteps = 0
+        jitter = 0
+        minimum = 0
+        for child in value['brVr']:
+            key2 = self.getOnlyKey(child)
+            value2 = self.getValueFromKey(child)
+            match key2:
+                case 'bVTy':
+                    sensorType = value2
+                case 'fStp':
+                    fadeSteps = value2
+                case 'jitter':
+                    jitter = value2
+                case 'Mnm ':
+                    minimum = value2
+                case _:
+                    self.unknownKey(f"dynamics {key2}", value2)
+        return (sensorType, fadeSteps, jitter, minimum)
+
+    def buildCurveFromMinimum(self, minimum):
+        """Build a Krita curve string. minimum is 0-1 range (ABR percentage already divided by 100)."""
+        if minimum > 0:
+            return f"0,{minimum:.4f};1,1"
+        return "0,0;1,1"
+
+    def applyDynamics(self, optionName, sensorKey, sensorType, fadeSteps, jitter, minimum):
+        """Apply a dynamics block to a Krita brush option."""
+        if sensorType == 0 and jitter == 0:
+            return
+        self.enableCurveOption(optionName, True)
+        curve = self.buildCurveFromMinimum(minimum)
+        if sensorType == 1 and fadeSteps > 0:
+            # Fade sensor with length
+            self.writer.setSensorFade(sensorKey, SensorId.Fade, curve, False, fadeSteps)
+        elif sensorType != 0:
+            self.writer.setSensor(sensorKey, self.convertSensor(sensorType), curve)
+
     def unknownKey(self, key, value="???"):
         print(f"Unknown key: {key} : {value}")
 
@@ -364,67 +413,36 @@ class ABRBrushConverter:
                 case 'brushProjection':
                     self.unsupportedKey(key)
                 case 'minimumDiameter':
-                    self.unsupportedKey(key)
+                    # Store for use in size dynamics curve
+                    self._minimumDiameter = value
                 case 'minimumRoundness':
-                    self.unsupportedKey(key)
+                    # Store for use in roundness dynamics curve
+                    self._minimumRoundness = value
                 case 'tiltScale':
                     self.unsupportedKey(key)
 
                 case 'szVr': # Size Control
-                    for child in value['brVr']:
-                        key2 = self.getOnlyKey(child)
-                        value2 = self.getValueFromKey(child)
-                        match key2:
-                            case 'bVTy': # Control # (type)
-                                self.enableCurveOption('Size', value2 != 0)
-                                if value2 != 0:
-                                    curve = "0,0;1,1"
-                                    self.writer.setSensor('SizeSensor', self.convertSensor(value2), curve)
-                            case 'fStp': # Fade Step
-                                self.unsupportedKey(key)
-                            case 'jitter':
-                                self.unsupportedKey(key)
-                            case 'Mnm ': # minimum?
-                                self.unsupportedKey(key)
-                            case _:
-                                self.unknownKey(f"{key} {key2}", value2)
+                    (sensorType, fadeSteps, jitter, minimum) = self.parseDynamicsBlock(value)
+                    # Use minimumDiameter if available and minimum not set
+                    if minimum == 0 and hasattr(self, '_minimumDiameter'):
+                        minimum = self._minimumDiameter
+                    self.applyDynamics('Size', 'SizeSensor', sensorType, fadeSteps, jitter, minimum)
                 
                 case 'angleDynamics':
-                    for child in value['brVr']:
-                        key2 = self.getOnlyKey(child)
-                        value2 = self.getValueFromKey(child)
-                        match key2:
-                            case 'bVTy':
-                                self.unsupportedKey(key)
-                            case 'fStp': # Fade Step
-                                self.unsupportedKey(key)
-                            case 'jitter':
-                                self.unsupportedKey(key)
-                            case 'Mnm ': # minimum?
-                                self.unsupportedKey(key)
-                            case _:
-                                self.unknownKey(f"{key} {key2}", value2)
+                    (sensorType, fadeSteps, jitter, minimum) = self.parseDynamicsBlock(value)
+                    self.applyDynamics('Rotation', 'RotationSensor', sensorType, fadeSteps, jitter, minimum)
 
                 case 'roundnessDynamics':
-                    for child in value['brVr']:
-                        key2 = self.getOnlyKey(child)
-                        value2 = self.getValueFromKey(child)
-                        match key2:
-                            case 'bVTy':
-                                self.unsupportedKey(key)
-                            case 'fStp': # Fade Step
-                                self.unsupportedKey(key)
-                            case 'jitter':
-                                self.unsupportedKey(key)
-                            case 'Mnm ': # minimum?
-                                self.unsupportedKey(key)
-                            case _:
-                                self.unknownKey(f"{key} {key2}", value2)
+                    (sensorType, fadeSteps, jitter, minimum) = self.parseDynamicsBlock(value)
+                    # Use minimumRoundness if available and minimum not set
+                    if minimum == 0 and hasattr(self, '_minimumRoundness'):
+                        minimum = self._minimumRoundness
+                    self.applyDynamics('Ratio', 'RatioSensor', sensorType, fadeSteps, jitter, minimum)
 
                 case 'useScatter':
                     self.enableCurveOption('Scatter', value)
-                case 'Spcn': # spacing?
-                    self.unsupportedKey(key)
+                case 'Spcn': # spacing in dynamics section (percent)
+                    self.writer.setBrushDefinitionSetting('spacing', value / 100.0)
                 case 'Cnt ': # Tip Count
                     self.unsupportedKey(key)
                 case 'bothAxes':
@@ -448,25 +466,10 @@ class ABRBrushConverter:
                                 self.unknownKey(f"{key} {key2}", value2)
 
                 case 'scatterDynamics':
-                    for child in value['brVr']:
-                        key2 = self.getOnlyKey(child)
-                        value2 = self.getValueFromKey(child)
-                        match key2:
-                            case 'bVTy':
-                                self.enableCurveOption('Scatter', value2 != 0)
-                                if value2 != 0:
-                                    curve = "0,0;1,1"
-                                    self.writer.setSensor('ScatterSensor', self.convertSensor(value2), curve)
-                                self.unsupportedKey(key)
-                            case 'fStp': # Fade Step
-                                self.unsupportedKey(key)
-                            case 'jitter':
-                                self.enableCurveOption('Scatter', value2 != 0)
-                                self.saveSetting('ScatterValue', value2)
-                            case 'Mnm ': # minimum?
-                                self.unsupportedKey(key)
-                            case _:
-                                self.unknownKey(f"{key} {key2}", value2)
+                    (sensorType, fadeSteps, jitter, minimum) = self.parseDynamicsBlock(value)
+                    if jitter != 0:
+                        self.saveSetting('ScatterValue', jitter)
+                    self.applyDynamics('Scatter', 'ScatterSensor', sensorType, fadeSteps, jitter, minimum)
                 
                 case 'dualBrush':
                     for key2 in value.keys():
@@ -518,23 +521,8 @@ class ABRBrushConverter:
                     self.unsupportedKey(key)
 
                 case 'textureDepthDynamics':
-                    for child in value['brVr']:
-                        key2 = self.getOnlyKey(child)
-                        value2 = self.getValueFromKey(child)
-                        match key2:
-                            case 'bVTy':
-                                self.enableCurveOption('Texture/Strength/', value2 != 0)
-                                if value2 != 0:
-                                    curve = "0,0;1,1"
-                                    self.writer.setSensor('Texture/Strength/Sensor', self.convertSensor(value2), curve)
-                            case 'fStp': # Fade Step
-                                self.unsupportedKey(key)
-                            case 'jitter':
-                                self.unsupportedKey(key)
-                            case 'Mnm ': # minimum?
-                                self.unsupportedKey(key)
-                            case _:
-                                self.unknownKey(f"{key} {key2}", value2)
+                    (sensorType, fadeSteps, jitter, minimum) = self.parseDynamicsBlock(value)
+                    self.applyDynamics('Texture/Strength/', 'Texture/Strength/Sensor', sensorType, fadeSteps, jitter, minimum)
                 
 
                 case 'Txtr': # Texture Pattern
@@ -578,42 +566,12 @@ class ABRBrushConverter:
                     self.unsupportedKey(key)
                 
                 case 'prVr': # Flow Jitter
-                    for child in value['brVr']:
-                        key2 = self.getOnlyKey(child)
-                        value2 = self.getValueFromKey(child)
-                        match key2:
-                            case 'bVTy':
-                                self.enableCurveOption('Flow', value2 != 0)
-                                if value2 != 0:
-                                    curve = "0,0;1,1"
-                                    self.writer.setSensor('FlowSensor', self.convertSensor(value2), curve)
-                            case 'fStp': # Fade Step
-                                self.unsupportedKey(key)
-                            case 'jitter':
-                                self.unsupportedKey(key)
-                            case 'Mnm ': # minimum?
-                                self.unsupportedKey(key)
-                            case _:
-                                self.unknownKey(f"{key} {key2}", value2)
+                    (sensorType, fadeSteps, jitter, minimum) = self.parseDynamicsBlock(value)
+                    self.applyDynamics('Flow', 'FlowSensor', sensorType, fadeSteps, jitter, minimum)
 
                 case 'opVr': # Opacity Jitter
-                    for child in value['brVr']:
-                        key2 = self.getOnlyKey(child)
-                        value2 = self.getValueFromKey(child)
-                        match key2:
-                            case 'bVTy':
-                                self.enableCurveOption('Opacity', value2 != 0)
-                                if value2 != 0:
-                                    curve = "0,0;1,1"
-                                    self.writer.setSensor('OpacitySensor', self.convertSensor(value2), curve)
-                            case 'fStp': # Fade Step
-                                self.unsupportedKey(key)
-                            case 'jitter':
-                                self.unsupportedKey(key)
-                            case 'Mnm ': # minimum?
-                                self.unsupportedKey(key)
-                            case _:
-                                self.unknownKey(f"{key} {key2}", value2)
+                    (sensorType, fadeSteps, jitter, minimum) = self.parseDynamicsBlock(value)
+                    self.applyDynamics('Opacity', 'OpacitySensor', sensorType, fadeSteps, jitter, minimum)
 
                 case 'wtVr': # ???
                     for child in value['brVr']:

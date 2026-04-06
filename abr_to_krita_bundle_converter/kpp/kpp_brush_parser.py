@@ -661,7 +661,32 @@ class KPP_Brush_Parser:
         print("setSensorDrawingAngle is not yet implemented!")
 
     def setSensorFade(self, sensorKey, inputKey, curve, periodic, length):
-        print("setSensorFade is not yet implemented!")
+        if not self.validateCurve(curve):
+            return
+
+        sensorParam = None
+        for param in self.xml.getElementsByTagName('param'):
+            if param.getAttribute('name') == sensorKey:
+                sensorParam = param
+                break
+
+        if sensorParam is None:
+            sensorParam = self.xml.createElement('param')
+            sensorParam.setAttribute('name', sensorKey)
+
+        sensorParams = self.xml.createElement('params')
+        sensorParams.setAttribute('id', inputKey)
+        sensorParams.setAttribute('length', str(int(length)))
+        sensorParams.setAttribute('periodic', '1' if periodic else '0')
+        sensorParams.appendChild(self.makeCurveElem(curve))
+
+        sensorParams = self.xml.createCDATASection("<!DOCTYPE params>" + sensorParams.toxml())
+        if sensorParam.hasChildNodes():
+            sensorParam.replaceChild(sensorParams, sensorParam.firstChild)
+        else:
+            sensorParam.appendChild(sensorParams)
+
+        self.xml.documentElement.appendChild(sensorParam)
 
     def setSensorDistance(self, sensorKey, inputKey, curve, periodic, length):
         print("setSensorDistance is not yet implemented!")
