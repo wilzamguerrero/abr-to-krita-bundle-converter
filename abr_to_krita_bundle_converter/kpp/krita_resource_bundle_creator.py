@@ -37,11 +37,12 @@ class KritaResourceBundleCreator:
     def __init__(self, bundlePath):
         self.bundlePath = bundlePath
 
-        self.resources = []  # list of (type, fullPath, md5sum, tags[])
+        # List of (resType, fileName, md5sum) in order added
+        self.resourceEntries = []
 
         self.desc = ""
 
-        # resource fullPath -> [tag names]
+        # (type, fileName) -> [tag_name, ...]
         self.resourceTags = {}
 
     def setDesc(self, desc):
@@ -89,28 +90,27 @@ class KritaResourceBundleCreator:
         with ZipFile(self.bundlePath, 'a') as bundleZip:
             manifestXML = """<?xml version="1.0" encoding="UTF-8"?>
 <manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">"""
-
-            for resType, fullPath, md5sum in self.resources:
-                tags = self.resourceTags.get(fullPath, [])
+            for resType, fileName, md5sum in self.resourceEntries:
+                key = (resType, fileName)
+                tags = self.resourceTags.get(key, [])
                 if tags:
-                    manifestXML += f'\n <manifest:file-entry manifest:media-type="{resType}" manifest:full-path="{fullPath}" manifest:md5sum="{md5sum}">'
+                    manifestXML += f'\n <manifest:file-entry manifest:media-type="{resType}" manifest:full-path="{resType}/{fileName}" manifest:md5sum="{md5sum}">'
                     manifestXML += '\n  <manifest:tags>'
-                    for tag in tags:
-                        manifestXML += f'\n   <manifest:tag>{tag}</manifest:tag>'
+                    for t in tags:
+                        manifestXML += f'\n   <manifest:tag>{t}</manifest:tag>'
                     manifestXML += '\n  </manifest:tags>'
                     manifestXML += '\n </manifest:file-entry>'
                 else:
-                    manifestXML += f'\n <manifest:file-entry manifest:media-type="{resType}" manifest:full-path="{fullPath}" manifest:md5sum="{md5sum}"/>'
-
+                    manifestXML += f'\n <manifest:file-entry manifest:media-type="{resType}" manifest:full-path="{resType}/{fileName}" manifest:md5sum="{md5sum}"/>'
             manifestXML += "\n</manifest:manifest>\n"
             bundleZip.writestr("META-INF/manifest.xml", manifestXML)
 
     def addTag(self, tagName, resourceType, fileName):
-        fullPath = f"{resourceType}/{fileName}"
-        if fullPath not in self.resourceTags:
-            self.resourceTags[fullPath] = []
-        if tagName not in self.resourceTags[fullPath]:
-            self.resourceTags[fullPath].append(tagName)
+        key = (resourceType, fileName)
+        if key not in self.resourceTags:
+            self.resourceTags[key] = []
+        if tagName not in self.resourceTags[key]:
+            self.resourceTags[key].append(tagName)
 
     def addResourcesFromFolder(self, resourcesPath):
         for rootPath, dirs, files in os.walk(resourcesPath):
@@ -138,7 +138,7 @@ class KritaResourceBundleCreator:
                     md5sum = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()
             fileName = os.path.basename(filePath)
             bundleZip.write(filePath, f"{type}/{fileName}")
-            self.resources.append((type, f"{type}/{fileName}", md5sum))
+            self.resourceEntries.append((type, fileName, md5sum))
 
     def addResourceFromData(self, data, type, fileName, md5sum=None):
         if md5sum == None:
@@ -146,7 +146,7 @@ class KritaResourceBundleCreator:
         print("addResourceFromData", type, fileName)
         with ZipFile(self.bundlePath, 'a') as bundleZip:
             bundleZip.writestr(f"{type}/{fileName}", data)
-            self.resources.append((type, f"{type}/{fileName}", md5sum))
+            self.resourceEntries.append((type, fileName, md5sum))
 
         return md5sum
 
